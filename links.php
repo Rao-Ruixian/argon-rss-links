@@ -59,13 +59,14 @@ class BFCLinks {
         $this->currentTime = time();
         // 间隔时间
         $this->cacheInterval = 3600;
+        $this->cachePath = WP_PLUGIN_DIR.'/yaya-links-rss/cache';
         
         // 确保缓存目录存在
-        $this->cachePath = WP_PLUGIN_DIR.'/yaya-links-rss/cache';
         if (!file_exists($this->cachePath)) {
             wp_mkdir_p($this->cachePath);
         }
     }
+    
     /**
      * 获取链接分类数据
      * @param [] $param 分类参数
@@ -103,21 +104,17 @@ class BFCLinks {
     /**
      * 获取RSS聚合
      * @param [] $category 分类
-     * @param int $limit 数量
+     * @param int 数量
      */
     public function getRss($category = 0, $limit = 10) {
-        $rssItems = [];
+        $cache_key = 'yaya_links_rss_data_' . $category . '_' . $limit;
+        $cached_data = get_transient($cache_key);
         
-//         $page = get_query_var('paged', 1);
-//         if ($page <= 0) {
-//             $page = 1;
-//         }
-//         $start = ($page - 1) * $limit - 1;
-//         if ($start < 0) {
-//             $start = 0;
-//         }
-//         $end = ($page * $limit);
-
+        if (false !== $cached_data) {
+            return $cached_data;
+        }
+        
+        $rssItems = [];
         $start = 0;
         $end = $limit;
         
@@ -135,15 +132,17 @@ class BFCLinks {
                 $SP = new SimplePie();
                 $SP->enable_cache(true);
                 $SP->set_cache_location($this->cachePath);
-                $SP->set_cache_duration(function_exists('yaya_rss_get_cache_time') ? yaya_rss_get_cache_time() : 3600); // 使用函数获取缓存时间
+                $SP->set_cache_duration($this->cacheInterval);
                 $SP->set_item_limit(5);
                 $SP->set_feed_url($feedurls);
-                $SP->force_encoding('UTF-8'); // 强制UTF-8编码
-                $SP->set_timeout(10); // 设置超时时间为10秒
                 $SP->init();
                 $rssItems = $SP->get_items($start, $end);
+                
+                // 缓存结果1小时
+                set_transient($cache_key, $rssItems, $this->cacheInterval);
             }
         }
+        
         return $rssItems;
     }
 }
