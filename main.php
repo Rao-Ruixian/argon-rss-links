@@ -11,6 +11,24 @@ Version: 1.2
 register_activation_hook(__FILE__, 'yaya_links_rss_activate');
 register_deactivation_hook(__FILE__, 'yaya_links_rss_deactivate');
 
+// 添加自定义的定时任务间隔
+add_filter('cron_schedules', 'yaya_links_rss_add_cron_intervals');
+
+// 添加自定义的定时任务间隔
+function yaya_links_rss_add_cron_intervals($schedules) {
+    // 添加15分钟间隔
+    $schedules['15min'] = array(
+        'interval' => 15 * MINUTE_IN_SECONDS,
+        'display' => __('每15分钟')
+    );
+    // 添加30分钟间隔
+    $schedules['30min'] = array(
+        'interval' => 30 * MINUTE_IN_SECONDS,
+        'display' => __('每30分钟')
+    );
+    return $schedules;
+}
+
 // 添加管理菜单
 add_action('admin_menu', 'yaya_links_rss_add_admin_menu');
 // 注册设置
@@ -43,8 +61,86 @@ add_action('yaya_links_rss_update_event', 'yaya_links_rss_update_cache');
 
 // 定时更新缓存函数
 function yaya_links_rss_update_cache() {
-    // 直接调用现有的load_links_rss函数更新缓存
-    load_links_rss();
+    // 确保SimplePie类已加载
+    if (!class_exists('SimplePie')) {
+        require_once ABSPATH . WPINC . '/class-simplepie.php';
+    }
+    
+    $settings = yaya_links_rss_get_settings();
+    $cache_key = 'yaya_links_rss_cache';
+    
+    // 生成内容的代码
+    $category = 0;  // 链接分类
+    $limit = $settings['display_count'];    // 使用设置中的显示数量
+    include_once WP_PLUGIN_DIR.'/yaya-links-rss/links.php';
+    $BFCLinks = new BFCLinks();
+    $rssItems = $BFCLinks->getRss($category, $limit);
+    
+    $html = '<div class="wp-block-argon-collapse collapse-block shadow-sm" style="border-left-color:#4fd69c"><div class="collapse-block-title" style="background-color:#4fd69c33"><span><i class="fa fa-rss"></i> </span><span class="collapse-block-title-inner">以下是友友们的最新文章~</span><i class="collapse-icon fa fa-angle-down"></i></div><div class="collapse-block-body" style="">';
+    $html .= '<div class="links-rss">';
+    
+    if (!empty($rssItems)) {
+        foreach ($rssItems as $item) {
+            $feed = $item->get_feed();
+            $author = $item->get_author();
+            $format = 'Y-m-d';
+            $dateTimeUnix = (int) $item->get_date('U');
+            $dateTimeOriginal = $item->get_date('');
+            $dateZone = explode('+', $dateTimeOriginal);
+            if (isset($dateZone[1])) {
+                $dateZone = $dateZone[1];
+                if ($dateZone != "0800") {
+                    $dateZone = (int) $dateZone[1];
+                    $dateZone = (800 - $dateZone) * 36;
+                    $dateTimeUnix = $dateTimeUnix + $dateZone;
+                }
+                if ($dateZone == "0800") {
+                    $dateTimeUnix = $dateTimeUnix + 28800;
+                }
+            }
+            $dateTime = date($format, $dateTimeUnix);
+
+            // 获取更新时间并格式化
+            $updateTimeUnix = (int) $item->get_updated_date('U');
+            $updateTimeOriginal = $item->get_updated_date('');
+            // 添加非空检查避免传递null给explode()
+            $updateZone = $updateTimeOriginal ? explode('+', $updateTimeOriginal) : [];
+            if (isset($updateZone[1])) {
+                $updateZone = $updateZone[1];
+                if ($updateZone != "0800") {
+                    $updateZone = (int) $updateZone[1];
+                    $updateZone = (800 - $updateZone) * 36;
+                    $updateTimeUnix = $updateTimeUnix + $updateZone;
+                }
+                if ($updateZone == "0800") {
+                    $updateTimeUnix = $updateTimeUnix + 28800;
+                }
+            }
+            // 使用WordPress时区设置格式化时间
+            $updateTime = date_i18n($format, $updateTimeUnix);
+
+            $html .= '
+            <p>
+                <span>'. esc_attr($dateTime) . '</span>
+                <a target="_blank" href="' . esc_attr($item->get_permalink()) .'" data-popover="' . wp_trim_words(sanitize_textarea_field($item->get_description()), 140, '...') . '">' . esc_attr($item->get_title()) . '</a>
+                <span style="float:right;">' . esc_attr($feed->get_title()) . '</span>
+            </p>';
+        }
+    } else {
+        $html .= '<p>暂时没有获取到友链的最新文章</p>';
+    }
+
+    $html .= '</div>';
+    $html .= '<p style="text-align: center; margin-bottom: 0; opacity: 0.3;">Fork from yaya, modified by <a href="https://github.com/Rao-Ruixian/argon-rss-links">学游渊</a></p>';
+    $html .= '<p style="text-align: center; margin-bottom: 0; opacity: 0.3;">缓存更新时间: ' . date_i18n('Y-m-d H:i:s', current_time('timestamp')) . '</p>';
+    $html .= '</div></div>';
+
+    // 设置缓存，过期时间根据用户设置的更新频率
+    $cache_expiration = yaya_links_rss_frequency_to_seconds($settings['update_frequency']);
+    set_transient($cache_key, $html, $cache_expiration);
+    
+    // 记录日志，便于调试
+    error_log('友链RSS缓存已通过定时任务更新，更新频率: ' . $settings['update_frequency'] . '，过期时间: ' . $cache_expiration . '秒');
 }
 
 // 当短代码被调用时运行的函数
@@ -175,6 +271,23 @@ function yaya_links_rss_sanitize_settings($input) {
     // 确保复选框值被正确处理
     $input['auto_load'] = isset($input['auto_load']) ? 1 : 0;
     $input['auto_expand'] = isset($input['auto_expand']) ? 1 : 0;
+    
+    // 获取旧设置
+    $old_settings = yaya_links_rss_get_settings();
+    
+    // 如果更新频率发生变化，重新安排定时任务
+    if (isset($input['update_frequency']) && $input['update_frequency'] !== $old_settings['update_frequency']) {
+        // 清除现有的定时任务
+        wp_clear_scheduled_hook('yaya_links_rss_update_event');
+        
+        // 重新安排定时任务
+        if (!wp_next_scheduled('yaya_links_rss_update_event')) {
+            wp_schedule_event(time(), $input['update_frequency'], 'yaya_links_rss_update_event');
+        }
+        
+        // 清除现有缓存，强制重新生成
+        delete_transient('yaya_links_rss_cache');
+    }
     
     return $input;
 }
@@ -350,6 +463,24 @@ jQuery(document).ready(function($) {
     <?php
 }
 
+// 将更新频率转换为秒数
+function yaya_links_rss_frequency_to_seconds($frequency) {
+    switch ($frequency) {
+        case '15min':
+            return 15 * MINUTE_IN_SECONDS;
+        case '30min':
+            return 30 * MINUTE_IN_SECONDS;
+        case 'hourly':
+            return HOUR_IN_SECONDS;
+        case 'twicedaily':
+            return 12 * HOUR_IN_SECONDS;
+        case 'daily':
+            return DAY_IN_SECONDS;
+        default:
+            return HOUR_IN_SECONDS; // 默认为1小时
+    }
+}
+
 function load_links_rss() {
     // 确保SimplePie类已加载
     if (!class_exists('SimplePie')) {
@@ -368,7 +499,6 @@ function load_links_rss() {
     
     // 生成内容的代码
     $category = 0;  // 链接分类
-    $settings = yaya_links_rss_get_settings();
     $limit = $settings['display_count'];    // 使用设置中的显示数量
     include_once WP_PLUGIN_DIR.'/yaya-links-rss/links.php';
     $BFCLinks = new BFCLinks();
@@ -434,8 +564,9 @@ $updateTime = date_i18n($format, $updateTimeUnix);
     $html .= '<p style="text-align: center; margin-bottom: 0; opacity: 0.3;">缓存更新时间: ' . date_i18n('Y-m-d H:i:s', current_time('timestamp')) . '</p>';
     $html .= '</div></div>';
 
-    // 设置缓存，过期时间为1小时
-    set_transient($cache_key, $html, HOUR_IN_SECONDS);
+    // 设置缓存，过期时间根据用户设置的更新频率
+    $cache_expiration = yaya_links_rss_frequency_to_seconds($settings['update_frequency']);
+    set_transient($cache_key, $html, $cache_expiration);
 
     // 输出 HTML 内容
     echo $html;
