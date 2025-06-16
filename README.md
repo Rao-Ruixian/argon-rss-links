@@ -1,4 +1,7 @@
 # 友链RSS聚合 WordPress插件
+最新公告：yaya已经更新插件了，推荐去官方那里下载新版本插件：https://github.com/crowya/yaya-plugins-for-argon
+
+
 在WordPress argon主题文章或页面中优雅地展示友情链接的最新文章，支持缓存机制，性能优化。
 
 ## 功能特色
